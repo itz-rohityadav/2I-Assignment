@@ -1,5 +1,7 @@
 import json
 import os
+import re
+import urllib.error
 import urllib.request
 
 
@@ -10,10 +12,26 @@ EXPECTED_MAPPING = {
 }
 
 
-def _ask_llm(prompt: str) -> str | None:
+def _format_http_error(error: urllib.error.HTTPError) -> str:
+    details = error.read().decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(details)
+        message = payload.get("error", {}).get("message")
+        if message:
+            return f"Gemini API HTTP {error.code}: {message.splitlines()[0]}"
+    except json.JSONDecodeError:
+        pass
+    return f"Gemini API HTTP {error.code}: {details[:300]}"
+
+
+def _ask_llm(prompt: str) -> tuple[str | None, str | None]:
+    provider = os.getenv("LLM_PROVIDER", "gemini").lower()
+    if provider != "gemini":
+        return None, f"unsupported LLM_PROVIDER={provider!r}; only 'gemini' is supported"
+
     api_key = os.getenv("LLM_API_KEY")
     if not api_key:
-        return None
+        return None, "LLM_API_KEY is not set"
 
     try:
         model = os.getenv("LLM_MODEL", "gemini-2.5-flash")
@@ -26,9 +44,21 @@ def _ask_llm(prompt: str) -> str | None:
         )
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        return payload["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception:
-        return None
+        return payload["candidates"][0]["content"]["parts"][0]["text"], None
+    except urllib.error.HTTPError as error:
+        return None, _format_http_error(error)
+    except urllib.error.URLError as error:
+        return None, f"Gemini API network error: {error.reason}"
+    except (KeyError, IndexError, json.JSONDecodeError) as error:
+        return None, f"unexpected Gemini API response format: {error}"
+
+
+def _parse_mapping(text: str) -> dict:
+    cleaned = text.strip()
+    match = re.search(r"```(?:json)?\s*(.*?)```", cleaned, flags=re.DOTALL)
+    if match:
+        cleaned = match.group(1).strip()
+    return json.loads(cleaned)
 
 
 def analyze(old_response: dict, new_response: dict, error: str) -> dict:
@@ -37,9 +67,12 @@ def analyze(old_response: dict, new_response: dict, error: str) -> dict:
         Old: {json.dumps(old_response)}
         New: {json.dumps(new_response)}
         Extraction error: {error}"""
-    llm_text = _ask_llm(prompt)
+    llm_text, llm_error = _ask_llm(prompt)
     if llm_text:
-        return json.loads(llm_text)
+        try:
+            return _parse_mapping(llm_text)
+        except json.JSONDecodeError as error:
+            llm_error = f"LLM returned invalid mapping JSON: {error}"
 
-    print("[ANALYZER] No LLM_API_KEY; using the simple local mapping fallback")
+    print(f"[ANALYZER] LLM unavailable ({llm_error}); using the simple local mapping fallback")
     return EXPECTED_MAPPING.copy()

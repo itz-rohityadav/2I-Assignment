@@ -30,9 +30,9 @@ The function must return exactly the keys name, age, city.
 New response: {json.dumps(new_response)}
 Mapping: {json.dumps(mapping)}
 Previous attempt information: {json.dumps(previous_memory or {})}"""
-    llm_text = _ask_llm(prompt)
+    llm_text, llm_error = _ask_llm(prompt)
     if llm_text:
         return _clean_code(llm_text)
 
-    print("[CODER] No LLM_API_KEY; using simple local code generation fallback")
+    print(f"[CODER] LLM unavailable ({llm_error}); using simple local code generation fallback")
     return _fallback_code(mapping)
