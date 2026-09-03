@@ -1,115 +1,187 @@
 # Autonomous Self-Healing Data Pipeline
 
-A learning-level prototype that automatically detects and recovers when a third-party API changes its response structure.
+## Track 1: The Autonomous Self-Healing Data Pipeline
+
+A learning-level agentic system that automatically detects and recovers from third-party API schema changes without manual intervention.
 
 ## Problem
+
+Data pipelines can break when a third-party API changes its response structure.
 
 The original API returns:
 
 {"name": "Rohit", "age": 22, "city": "Bangalore"}
 
-After a schema change, it returns:
+After the schema changes, it returns:
 
 {"user": {"full_name": "Rohit", "details": {"age": 22, "location": "Bangalore"}}}
 
-The existing extractor fails because the fields are no longer at the expected locations.
+The external structure changes, but the internal pipeline must continue producing:
+
+{"name": "Rohit", "age": 22, "city": "Bangalore"}
 
 ## Solution
 
-The system automatically:
+The system automatically follows this workflow:
 
-1. Detects the extraction failure.
-2. Analyzes the old and new API responses.
-3. Identifies the new field mapping.
-4. Generates a new extractor.
-5. Tests the generated code inside Docker.
-6. Rejects failed code.
-7. Deploys the code only after successful testing.
+API
+↓
+Monitor
+↓
+Extraction Failure
+↓
+Semantic Analyzer Agent
+↓
+Schema Mapping
+↓
+Coder Agent
+↓
+Docker Sandbox
+↓
+Validation
+↓
+Deployer
+↓
+Updated Extractor
+
+## Agentic Workflow
+
+### 1. Dynamic Source
+
+A local FastAPI server acts as the third-party data source.
+
+It provides two versions:
+
+/users?version=1
+
+/users?version=2
+
+V1 uses a flat JSON structure.
+
+V2 uses a nested JSON structure.
+
+The internal output format remains unchanged.
+
+### 2. Monitor
+
+The existing extractor processes the API response.
+
+When the API changes and extraction fails, the monitor detects the error.
+
+Example:
+
+KeyError: 'name'
+
+This failure indicates a possible schema change.
+
+### 3. Semantic Analyzer Agent
+
+The Analyzer compares the old response, new response, and extraction error.
+
+It identifies the new locations of the required fields:
+
+name → user.full_name
+age → user.details.age
+city → user.details.location
+
+Gemini is used for semantic analysis when configured.
+
+### 4. Coder Agent
+
+The Coder Agent uses the discovered mapping to generate a new Python extraction function.
+
+The generated extractor must continue producing the fixed internal schema:
+
+name
+age
+city
+
+### 5. Sandbox Evaluator
+
+LLM-generated code is treated as untrusted code.
+
+It is NOT executed directly on the host machine.
+
+The generated extractor is executed inside an isolated Docker container.
+
+The sandbox:
+
+- Executes the generated code
+- Provides test input
+- Validates the output
+- Captures errors and stack traces
+- Rejects failed code
+
+The demonstration intentionally generates a failed first attempt to show that the sandbox prevents invalid code from being deployed.
+
+### 6. Deployer
+
+Only after the generated extractor passes the Docker sandbox test, it is deployed as:
+
+extractor/active_extractor.py
+
+The pipeline then reloads the updated extractor and successfully processes the changed API response.
+
+## Context Memory
+
+The project maintains lightweight context memory in:
+
+memory/memory.json
+
+It stores information about previous generation attempts, including:
+
+- Generated code
+- Schema mapping
+- Success/failure status
+- Error information
+
+This context can be supplied to the next Coder Agent attempt so that it does not repeatedly make the same mistake.
 
 ## Architecture
 
-Mock API
-   ↓
+Mock FastAPI API
+        ↓
 Active Extractor
-   ↓
+        ↓
 Monitor
-   ↓
+        ↓
 Analyzer Agent
-   ↓
+        ↓
 Coder Agent
-   ↓
+        ↓
 Docker Sandbox
-   ↓
-Validation
-   ↓
-Deploy New Extractor
-
-## Schema Mapping
-
-Old field → New field
-
-name → user.full_name
-age  → user.details.age
-city → user.details.location
-
-The internal output remains:
-
-{"name": "...", "age": 0, "city": "..."}
+        ↓
+    Pass / Fail
+        ↓
+   Deployer
+        ↓
+Updated Extractor
 
 ## Project Structure
 
 Principal-AI-Self-Healing-Pipeline/
+│
 ├── agents/
 │   ├── analyzer.py
 │   └── coder.py
+│
 ├── extractor/
 │   └── active_extractor.py
+│
 ├── memory/
+│   └── memory.json
+│
 ├── mock_api/
 │   └── main.py
+│
 ├── sandbox/
 │   └── runner.py
+│
 ├── .env.example
 ├── main.py
 ├── memory_store.py
 ├── requirements.txt
 └── README.md
-
-## Components
-
-mock_api/main.py
-Provides the mock third-party API with V1 and V2 responses.
-
-agents/analyzer.py
-Uses Gemini to understand the API schema change and generate the field mapping.
-
-agents/coder.py
-Generates a new Python extractor using the mapping.
-
-sandbox/runner.py
-Runs generated code inside an isolated Docker container and returns the result or error.
-
-memory_store.py
-Stores previous generation attempts and errors for context.
-
-main.py
-Controls the complete self-healing workflow.
-
-## Security
-
-LLM-generated code is never executed directly on the host machine.
-
-Generated code is first executed inside a Docker container.
-
-Only code that passes the sandbox test is deployed as the active extractor.
-
-For production, additional controls such as resource limits, network restrictions, timeouts, non-root containers, and stronger isolation would be required.
-
-## Context Memory
-
-The system stores the previous generated code, mapping, success/failure status, and error.
-
-This information can be provided to the next Coder Agent attempt to help avoid repeated mistakes.
 
 ## Technology Stack
 
@@ -121,13 +193,21 @@ JSON
 Uvicorn
 python-dotenv
 
+## Security
+
+The Coder Agent generates code, but generated code is never blindly executed on the host system.
+
+All generated extraction code is tested inside Docker before deployment.
+
+Only successfully validated code is promoted to the active extractor.
+
+For a production implementation, additional security controls such as resource limits, timeouts, network restrictions, non-root execution, read-only filesystems, and stronger isolation would be required.
+
 ## Setup
 
-Create a virtual environment:
+Create and activate a virtual environment:
 
 python -m venv .venv
-
-Activate it:
 
 .\.venv\Scripts\Activate.ps1
 
@@ -139,31 +219,31 @@ Create the environment file:
 
 Copy-Item .env.example .env
 
-Make sure Docker Desktop is installed and running.
+Configure Docker Desktop and make sure Docker is running.
 
 ## Configuration
 
-Set the following in .env:
+Set the Gemini configuration in .env:
 
 LLM_PROVIDER=gemini
 LLM_API_KEY=your_api_key_here
 LLM_MODEL=gemini-3.5-flash
 
-The LLM is optional. Without an API key, the project uses the local fallback.
+The LLM is optional. A local fallback is available when no API key is provided.
 
-Never commit .env or an actual API key to GitHub.
+Never commit the actual .env file or API key to GitHub.
 
 ## Running
 
-Terminal 1:
+Start the mock API in Terminal 1:
 
 uvicorn mock_api.main:app --reload
 
-Terminal 2:
+Run the pipeline in Terminal 2:
 
 python main.py
 
-## API Endpoints
+## API
 
 V1:
 
@@ -173,93 +253,76 @@ V2:
 
 http://127.0.0.1:8000/users?version=2
 
-V1 represents the original API structure.
+## Example Execution
 
-V2 represents the changed API structure that triggers self-healing.
-
-## Example Flow
-
-V1 API
-↓
-Extractor succeeds
-↓
-V2 API
-↓
-Extractor fails with KeyError
-↓
-Analyzer identifies schema change
-↓
-Coder generates new extractor
-↓
-Docker sandbox tests code
-↓
-Failed attempt is rejected
-↓
-Corrected code passes
-↓
-New extractor is deployed
-↓
-V2 extraction succeeds
-
-## Example Output
+V1 extraction succeeds:
 
 [MONITOR] Extraction successful
+
+V2 causes the original extractor to fail:
 
 [MONITOR] Extraction failed - schema changed
 (KeyError: 'name')
 
-[ANALYZER] Mapping discovered:
+Analyzer discovers:
+
 {"name": "user.full_name", "age": "user.details.age", "city": "user.details.location"}
 
-[CODER] Testing an intentionally bad first attempt
+Coder generates a new extractor.
+
+The first invalid attempt is rejected by the Docker sandbox:
 
 [SANDBOX] Bad attempt rejected
 
-[CODER] Generating corrected extractor
+The corrected extractor passes:
 
 [SANDBOX] Corrected extractor passed:
 {'name': 'Rohit', 'age': 22, 'city': 'Bangalore'}
 
+The validated extractor is deployed:
+
 [DEPLOY] New extractor is now active
+
+The changed API now works successfully:
 
 [MONITOR] Extraction successful after self-healing
 
-## Design Decisions
+## Proof of Execution
 
-The mock API makes the schema change deterministic and easy to reproduce.
+The terminal execution demonstrates:
 
-The Analyzer Agent provides semantic understanding of the schema change.
-
-The Coder Agent generates replacement extraction code.
-
-Docker provides isolation for generated code before deployment.
-
-Context memory provides previous attempts and errors to future generations.
-
-The internal schema remains fixed even when the external API changes.
+1. Original extractor successfully processes V1.
+2. V2 causes a schema mismatch.
+3. Analyzer identifies the changed structure.
+4. Coder generates replacement code.
+5. Docker rejects an invalid generated attempt.
+6. Corrected code passes sandbox validation.
+7. The new extractor is deployed.
+8. V2 extraction succeeds after self-healing.
 
 ## Limitations
 
 This is a learning-level prototype.
 
-It uses a simple mock API, lightweight JSON memory, and basic Docker sandboxing.
+The current implementation uses a simple mock API, lightweight JSON memory, and basic Docker sandboxing.
 
-It does not currently provide production-grade monitoring, rollback, distributed orchestration, or advanced security controls.
+It does not implement production-grade orchestration, monitoring, rollback, or advanced sandbox hardening.
 
 ## Future Improvements
 
 - Stronger sandbox isolation
 - Automatic rollback
 - Versioned extractors
-- Better schema-diff detection
-- Persistent database memory
+- More complex schema changes
+- Persistent memory/database
 - Production monitoring
 - Automated regression tests
-- Kubernetes-based execution
-- Human approval for high-risk changes
+- Kubernetes-based sandbox execution
 
-## Goal
+## Conclusion
 
-The project demonstrates an autonomous self-healing pipeline:
+The project demonstrates the required self-healing pipeline:
 
-Detect → Understand → Generate → Safely Test → Deploy
+Detect → Understand → Rewrite → Safely Test → Deploy
+
+It shows how an agentic system can automatically recover from an external API schema change while keeping the internal data format fixed.
