@@ -13,6 +13,7 @@ from sandbox.runner import test_in_docker
 
 API_URL = "http://127.0.0.1:8000/users"
 ACTIVE_FILE = Path(__file__).parent / "extractor" / "active_extractor.py"
+BASELINE_FILE = Path(__file__).parent / "extractor" / "extractor.py"
 
 load_dotenv()
 
@@ -27,8 +28,16 @@ def load_active_extractor():
     return importlib.reload(module).extract
 
 
+def reset_active_extractor() -> None:
+    ACTIVE_FILE.write_text(BASELINE_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+    importlib.invalidate_caches()
+
+
 def run_pipeline() -> None:
     print("=== Autonomous Self-Healing Data Pipeline ===")
+    reset_active_extractor()
+    print("[RESET] Active extractor restored to V1 baseline")
+
     v1 = fetch_user(1)
     print(f"[API] V1 response: {v1}")
     print(f"[PIPELINE] V1 output: {load_active_extractor()(v1)}")
